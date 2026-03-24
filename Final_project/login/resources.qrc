@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC>
+  <qresource prefix="/">
+    <file>login.qml</file>
+    <file>fonts/Roboto-Regular.ttf</file>
+    <file>images/file.png</file>
+    <file>images/cloud.png</file>
+    <file>HoverCard.qml</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Docs</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f1f3f4;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: white;
+      padding: 12px 16px;
+      border-bottom: 1px solid #ccc;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .toolbar button,
+    .toolbar select,
+    .toolbar input[type="color"] {
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .toolbar button:hover {
+      background: #f0f0f0;
+    }
+
+    .page-wrap {
+      display: flex;
+      justify-content: center;
+      padding: 30px;
+    }
+
+    .page {
+      width: 800px;
+      min-height: 1000px;
+      background: white;
+      padding: 60px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.12);
+      outline: none;
+      font-size: 18px;
+      line-height: 1.6;
+      border-radius: 4px;
+
+
+          .top-right-nav {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000; 
+        }
+    .logout-btn {
+            background-color: #000000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-weight: bold;
+            transition: background 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background-color: #181618;
+        }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <button onclick="formatText('bold')"><b>B</b></button>
+    <button onclick="formatText('italic')"><i>I</i></button>
+    <button onclick="formatText('underline')"><u>U</u></button>
+
+    <select onchange="changeFont(this.value)">
+      <option value="">Font</option>
+      <option value="Arial">Arial</option>
+      <option value="Georgia">Georgia</option>
+      <option value="Courier New">Courier New</option>
+      <option value="Times New Roman">Times New Roman</option>
+      <option value="Verdana">Verdana</option>
+    </select>
+
+    <select onchange="changeSize(this.value)">
+      <option value="">Size</option>
+      <option value="1">10px</option>
+      <option value="2">13px</option>
+      <option value="3">16px</option>
+      <option value="4">18px</option>
+      <option value="5">24px</option>
+      <option value="6">32px</option>
+      <option value="7">48px</option>
+    </select>
+
+    <input type="color" onchange="changeColor(this.value)" title="Text Color" />
+
+    <button onclick="saveFile()">Save</button>
+    <button onclick="clearPage()">Clear</button>
+  </div>
+
+  <div class="page-wrap">
+    <div class="page" id="editor" contenteditable="true">
+    </div>
+  </div>
+
+<div class="top-right-nav">
+        <button id="logout-button" class="logout-btn">Log Out</button>
+</div>
+
+
+
+
+  <script>function formatText(command) {
+      document.execCommand(command, false, null);
+    }
+
+    function changeFont(font) {
+      document.execCommand("fontName", false, font);
+    }
+
+    function changeSize(size) {
+      document.execCommand("fontSize", false, size);
+    }
+
+    function changeColor(color) {
+      document.execCommand("foreColor", false, color);
+    }
+
+    function clearPage() {
+      if (confirm("Clear everything on the page?")) {
+        document.getElementById("editor").innerHTML = "";
+      }
+    }
+
+    function saveFile() {
+      const content = document.getElementById("editor").innerHTML;
+      const fullHTML = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Saved Document</title>
+        </head>
+        <body>
+          ${content}
+        </body>
+        </html>`;
+
+      const blob = new Blob([fullHTML], { type: "text/html" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "my-document.html";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+
+    const logoutBtn = document.getElementById('logout-button');
+
+    logoutBtn.addEventListener('click', async () => {
+        const confirmLogout = confirm("Are you sure you want to log out?");
+        
+        if (confirmLogout) {
+            try {
+                const response = await fetch('/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        action: 'logout',
+                        timestamp: Date.now() 
+                    })
+                });
+
+                if (response.ok) {
+                    window.location.href = './index.html';
+                } else {
+                    alert("Logout failed on server.");
+                }
+            } catch (error) {
+                console.error("Error logging out:", error);
+                window.location.href = './index.html';
+            }
+        }
+    });
+    const params = new URLSearchParams(window.location.search);
+    let Name = params.get("file") || prompt("Name of document");
+    if (Name && Name.toLowerCase().endsWith(".docx")) {
+      Name = Name.slice(0, -5);
+    }
+    const OWNER = params.get("owner") || "";
+    const ACCESS = params.get("access") || "owner";
+    let changed = false;
+    let editor = null;
+    let collabSocket = null;
+    let clientId = "";
+    let suppressBroadcast = false;
+
+    function fileQuery(extra = {}) {
+      return new URLSearchParams({ file: Name, owner: OWNER, ...extra }).toString();
+    }
+
+    function lockReadOnly(message) {
+      editor.contentEditable = 'false';
+      editor.style.opacity = '0.55';
+      document.querySelector('.toolbar').style.pointerEvents = 'none';
+      document.querySelector('.toolbar').style.opacity = '0.4';
+      const banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#1f2937;color:white;text-align:center;padding:14px;font-size:16px;font-weight:bold;z-index:9999';
+      banner.textContent = message;
+      document.body.prepend(banner);
+    }
+
+    function openCollab() {
+      const proto = window.location.protocol === "https:" ? "wss" : "ws";
+      collabSocket = new WebSocket(`${proto}://${window.location.host}/collab_ws?${fileQuery({ type: 'doc' })}`);
+      collabSocket.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "hello") {
+          clientId = payload.clientId || "";
+          if (payload.state && payload.state !== editor.innerHTML) {
+            suppressBroadcast = true;
+            editor.innerHTML = payload.state;
+            suppressBroadcast = false;
+          }
+          if (payload.access === "view") {
+            lockReadOnly("This shared document is view-only.");
+          }
+        } else if (payload.type === "update" && payload.clientId !== clientId) {
+          suppressBroadcast = true;
+          editor.innerHTML = payload.state || "";
+          changed = false;
+          suppressBroadcast = false;
+        } else if (payload.type === "persist_error") {
+          console.error("Persist failed:", payload.message);
+        }
+      };
+    }
+
+    function pushState() {
+      if (ACCESS === "view" || suppressBroadcast) return;
+      if (!collabSocket || collabSocket.readyState !== WebSocket.OPEN) return;
+      collabSocket.send(JSON.stringify({ type: "update", state: editor.innerHTML }));
+    }
+
+    window.onload = function () {
+      editor = document.getElementById("editor")
+      editor.addEventListener("input", () => { changed = true; pushState(); });
+      
+      // Load existing DOCX content (if any) into the editor
+      fetch(`/open_doc?${fileQuery()}`)
+        .then(response => {
+          if (!response.ok) {
+            return "";
+          }
+          return response.text();
+        })
+        .then(html => {
+          if (html) {
+            editor.innerHTML = html;
+            changed = false;
+          }
+          openCollab();
+        })
+        .catch(err => {
+          console.error("Failed to load document:", err);
+          openCollab();
+        });
+
+      if (false) setInterval( async () => {
+        if (!changed) return;
+        const response = await fetch(`/save_doc?${Name}`, {
+          method: 'POST',
+          headers: { 'X-Page-Token': PAGE_TOKEN },
+          body: editor.innerHTML
+        });
+        if (response.ok) {
+          changed = false;
+        } else if (response.status === 409) {
+          // A newer page has taken over this session — lock this tab out.
+          editor.contentEditable = 'false';
+          editor.style.opacity = '0.4';
+          document.querySelector('.toolbar').style.pointerEvents = 'none';
+          document.querySelector('.toolbar').style.opacity = '0.4';
+          const banner = document.createElement('div');
+          banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#c0392b;color:white;text-align:center;padding:14px;font-size:16px;font-weight:bold;z-index:9999';
+          banner.textContent = 'This page has been displaced by a newer session. Your edits are locked.';
+          document.body.prepend(banner);
+        }
+      }, 5000)
+
+      if (ACCESS === "view") {
+        lockReadOnly("This shared document is view-only.");
+      }
+    }
+    
+    
+    
+    
+    
+    
+    </script>
+
+</body>
+</html>

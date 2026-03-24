@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drive</title>
+
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        gap: 60px;
+        background-color: #f5f5f5;
+    }
+
+    button {
+        border: none;
+        background: white;
+        cursor: pointer;
+        padding: 20px;
+        border-radius: 16px;
+        transition: transform 0.2s, box-shadow 0.2s;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    button:hover {
+        transform: scale(1.07);
+        box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+    }
+
+    img {
+        width: 160px;
+        height: auto;
+        margin-bottom: 10px;
+    }
+
+    .label {
+        font-size: 18px;
+        font-weight: bold;
+        color: #333;
+    }
+    .top-right-nav {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000; 
+        }
+    .logout-btn {
+            background-color: #000000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: sans-serif;
+            font-weight: bold;
+            transition: background 0.3s ease;
+        }
+
+        .logout-btn:hover {
+            background-color: #181618;
+        }
+</style>
+</head>
+
+<body>
+
+<button onclick="location.href='./docs.html'">
+    <img src="./images/docs.png" alt="Documents">
+    <div class="label">Documents</div>
+</button>
+
+<button onclick="location.href='./slides.html'">
+    <img src="./images/slide_show.png" alt="Slideshow">
+    <div class="label">Slideshow</div>
+</button>
+
+<button onclick="location.href='./whitboard.html'">
+    <img src="./images/whitboard.png" alt="Whiteboard">
+    <div class="label">Whiteboard</div>
+</button>
+<div class="top-right-nav">
+        <button id="logout-button" class="logout-btn">Log Out</button>
+</div>
+
+
+
+
+
+
+<script>
+    const logoutBtn = document.getElementById('logout-button');
+
+    logoutBtn.addEventListener('click', async () => {
+        const confirmLogout = confirm("Are you sure you want to log out?");
+        
+        if (confirmLogout) {
+            try {
+                const response = await fetch('/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        action: 'logout',
+                        timestamp: Date.now() 
+                    })
+                });
+
+                if (response.ok) {
+                    window.location.href = './index.html';
+                } else {
+                    alert("Logout failed on server.");
+                }
+            } catch (error) {
+                console.error("Error logging out:", error);
+                window.location.href = './index.html';
+            }
+        }
+    });
+
+
+
+</script>
+</body>
+</html>

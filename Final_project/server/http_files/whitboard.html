@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whiteboard</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f1f3f4;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: white;
+      padding: 12px 16px;
+      border-bottom: 1px solid #ccc;
+      z-index: 10;
+    }
+
+    .toolbar button,
+    .toolbar select,
+    .toolbar input[type="color"],
+    .toolbar input[type="range"] {
+      padding: 6px 8px;
+      font-size: 14px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .toolbar button:hover {
+      background: #f0f0f0;
+    }
+
+    .toolbar-note {
+      font-size: 13px;
+      color: #4b5563;
+      margin-left: auto;
+    }
+
+    .save-status {
+      min-width: 190px;
+      font-size: 13px;
+      color: #334155;
+      text-align: right;
+    }
+
+    .save-status.error {
+      color: #b91c1c;
+    }
+
+    .save-status.success {
+      color: #166534;
+    }
+
+    .board-wrap {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    #board {
+      background: white;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.12);
+      border-radius: 4px;
+      touch-action: none;
+    }
+
+    .top-right-nav {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+    }
+    .logout-btn {
+      background-color: #000000;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-family: sans-serif;
+      font-weight: bold;
+      transition: background 0.3s ease;
+    }
+
+    .logout-btn:hover {
+      background-color: #181618;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label>Color <input type="color" id="color" value="#000000" /></label>
+    <label>Size <input type="range" id="size" min="1" max="40" value="4" /></label>
+    <button onclick="setMode('draw')">Draw</button>
+    <button onclick="setMode('erase')">Erase</button>
+    <button onclick="clearBoard()">Clear</button>
+    <button onclick="saveNow()">Save to Cloud</button>
+    <button onclick="downloadPNG()">Download PNG</button>
+    <span class="toolbar-note">Cloud save updates app storage. Download PNG exports to your PC.</span>
+    <span id="save-status" class="save-status">Ready</span>
+  </div>
+
+  <div class="board-wrap">
+    <canvas id="board" width="1200" height="700"></canvas>
+  </div>
+
+  <div class="top-right-nav">
+    <button id="logout-button" class="logout-btn">Log Out</button>
+  </div>
+
+  <script>
+    const logoutBtn = document.getElementById('logout-button');
+    logoutBtn.addEventListener('click', async () => {
+      const confirmLogout = confirm("Are you sure you want to log out?");
+      if (confirmLogout) {
+        try {
+          const response = await fetch('/logout', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              action: 'logout',
+              timestamp: Date.now()
+            })
+          });
+
+          if (response.ok) {
+            window.location.href = './index.html';
+          } else {
+            alert("Logout failed on server.");
+          }
+        } catch (error) {
+          console.error("Error logging out:", error);
+          window.location.href = './index.html';
+        }
+      }
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    let Name = params.get("file") || prompt("Name of whiteboard");
+    if (Name && Name.toLowerCase().endsWith(".png")) {
+      Name = Name.slice(0, -4);
+    }
+    const OWNER = params.get("owner") || "";
+    const ACCESS = params.get("access") || "owner";
+
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const colorInput = document.getElementById('color');
+    const sizeInput = document.getElementById('size');
+    const saveStatus = document.getElementById('save-status');
+
+    let drawing = false;
+    let mode = 'draw';
+    let lastX = 0;
+    let lastY = 0;
+    let changed = false;
+    let saveInFlight = false;
+    let collabSocket = null;
+    let clientId = "";
+    let suppressBroadcast = false;
+
+    if (!Name) {
+      Name = "whiteboard";
+    } else {
+      Name = Name.trim();
+    }
+
+    function setStatus(message, kind = "") {
+      saveStatus.textContent = message;
+      saveStatus.className = "save-status" + (kind ? ` ${kind}` : "");
+    }
+
+    function whiteboardQuery(extraParams = {}) {
+      const qs = new URLSearchParams({ file: Name, owner: OWNER, ...extraParams });
+      return qs.toString();
+    }
+
+    function lockReadOnly(message) {
+      document.querySelector('.toolbar').style.pointerEvents = 'none';
+      document.querySelector('.toolbar').style.opacity = '0.45';
+      const banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;top:0;left:0;width:100%;background:#1f2937;color:white;text-align:center;padding:14px;font-size:16px;font-weight:bold;z-index:9999';
+      banner.textContent = message;
+      document.body.prepend(banner);
+    }
+
+    function applyDataUrl(dataUrl) {
+      if (!dataUrl) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        changed = false;
+      };
+      img.src = dataUrl;
+    }
+
+    function openCollab() {
+      const proto = window.location.protocol === "https:" ? "wss" : "ws";
+      collabSocket = new WebSocket(`${proto}://${window.location.host}/collab_ws?${whiteboardQuery({ type: 'whiteboard' })}`);
+      collabSocket.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "hello") {
+          clientId = payload.clientId || "";
+          if (payload.state) applyDataUrl(payload.state);
+          if (payload.access === "view") lockReadOnly("This shared whiteboard is view-only.");
+        } else if (payload.type === "update" && payload.clientId !== clientId) {
+          suppressBroadcast = true;
+          applyDataUrl(payload.state || "");
+          suppressBroadcast = false;
+          setStatus("Live update received", "success");
+        }
+      };
+    }
+
+    function pushState() {
+      if (ACCESS === "view" || suppressBroadcast) return;
+      if (!collabSocket || collabSocket.readyState !== WebSocket.OPEN) return;
+      collabSocket.send(JSON.stringify({ type: "update", state: canvas.toDataURL("image/png") }));
+    }
+
+    function setMode(m) {
+      mode = m;
+    }
+
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    function startDraw(e) {
+      drawing = true;
+      const pos = getPos(e);
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function draw(e) {
+      if (!drawing) return;
+      const pos = getPos(e);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = sizeInput.value;
+      ctx.strokeStyle = mode === 'erase' ? '#ffffff' : colorInput.value;
+
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      lastX = pos.x;
+      lastY = pos.y;
+      changed = true;
+      setStatus("Unsaved cloud changes");
+    }
+
+    function endDraw() {
+      drawing = false;
+      pushState();
+    }
+
+    function clearBoard() {
+      if (confirm("Clear the whiteboard?")) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        changed = true;
+        setStatus("Unsaved cloud changes");
+        pushState();
+      }
+    }
+
+    function downloadPNG() {
+      const dataUrl = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = (Name || "whiteboard") + ".png";
+      a.click();
+    }
+
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', endDraw);
+    canvas.addEventListener('mouseleave', endDraw);
+
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDraw(e); });
+    canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e); });
+    canvas.addEventListener('touchend', (e) => { e.preventDefault(); endDraw(e); });
+
+    async function saveNow() {
+      if (saveInFlight) return;
+      const dataUrl = canvas.toDataURL("image/png");
+      console.log("Saving whiteboard to server...");
+      saveInFlight = true;
+      setStatus("Saving to cloud...");
+      try {
+        const response = await fetch(`/save_whiteboard?${whiteboardQuery()}`, {
+          method: 'POST',
+          body: dataUrl
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload && payload.ok) {
+          console.log("Whiteboard saved.", payload);
+          changed = false;
+          setStatus(`Saved to cloud (${payload.bytes_written} bytes)`, "success");
+        } else {
+          const errorMessage = payload && payload.error ? payload.error : `Save failed (${response.status})`;
+          console.error("Save failed with status", response.status, payload);
+          setStatus(errorMessage, "error");
+        }
+      } catch (error) {
+        console.error("Save failed:", error);
+        setStatus("Save failed. Check server connection.", "error");
+      } finally {
+        saveInFlight = false;
+      }
+    }
+
+    // Load existing PNG into canvas (if any)
+    function loadExisting() {
+      setStatus("Loading whiteboard...");
+      fetch(`/open_whiteboard?${whiteboardQuery({ t: Date.now().toString() })}`)
+        .then(response => {
+          if (!response.ok) {
+            return null;
+          }
+          return response.blob();
+        })
+        .then(blob => {
+          if (!blob || blob.size === 0) {
+            setStatus("Ready");
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            changed = false;
+            setStatus("Loaded latest cloud version", "success");
+            openCollab();
+          };
+          img.src = url;
+        })
+        .catch(err => {
+          console.error("Failed to load whiteboard:", err);
+          setStatus("Could not load cloud whiteboard", "error");
+          openCollab();
+        });
+    }
+
+    window.onload = function () {
+      loadExisting();
+
+      if (false) setInterval(async () => {
+        if (!changed) return;
+        await saveNow();
+      }, 5000);
+      if (ACCESS === "view") {
+        lockReadOnly("This shared whiteboard is view-only.");
+      }
+    };
+  </script>
+</body>
+</html>
+
